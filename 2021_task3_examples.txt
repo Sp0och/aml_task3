@@ -1,0 +1,46 @@
+Congratulations for finishing task 3 of the practical projects!
+
+Here, the summary of the top 3 approaches for the mitral valve segmentation task:
+Example 1:
+We used mainly TensorFlow and the following libraries for our final solution as well as during testing:
+Cv2, scikit-image, elasticdeform, cc3d
+We decided to split our given data by amateur and expert up. The former was purely used for training and expert data was split between validation and training (20/80 split).
+After that, we resize all images and labels to 256x256 (much bigger our machines were not able to train).
+With the following augmentation functions we applied, we managed to increase the training set by roughly 15 fold.               
+ - Randomly adding noise outside the bounding box
+ - Zoom and rotation by small values
+ - Elastic deformation of whole images
+Using this training data, we trained a U-Net model with 10 layers for the image segmentation over 400 epochs with early stopping and checkpointing.
+To consider the temporal information between frames, we tried to regularize the output vector of images, by using the connected components on multilabel 3d images (cc3d) library to find all connected components above a certain pixel count average per mask image.
+Another postprocessing regularization approach was to dilate and erose the output label, which in the end only reduced our IoU score.
+Using a 5-fold cross-validation we evaluated different model parameters (learning_rate, batch_size, number_of_epochs, augmentation, kernel_size, loss_function) as well as thresholds for pre- and post-processing.
+
+Example 2:
+# Preprocessing
+Each labeled frame in all video samples was extracted. Adaptive histogram equalization and a sharpening mask was applied. Two additional image channels were added: one with a farid edge-detection filter (to assist in shape detection) and one with a median filter (to smooth out noise).
+All frames were resized to (192, 192)
+# Augmentation
+Preprocessed frames were additionally augmented using keras ImageDataGenerator, which modified images randomly using rotations, shears, translations, zooms, and flips.
+# Model
+The model used was based on U-Net.
+- Encoder: used four double-convolution blocks with filter sizes of 24/48/96/192, kernel size of 3, ReLU activation and 2*2 max pooling
+- Decoder: used four double-convolution blocks with filter sizes of 24/48/96/192, kernel size of 3, ReLU activation and an upsampling/convolution step using a convolutional layer with kernel size of 2 and ReLU activation
+- Skip connections between encoder and decoder were implemented with simple depthwise concatenation
+# Results
+The model was trained with a batch size of 25 for 50 epochs, with 50 steps per epoch, using ADAM optimizer and binary-cross-entropy loss. Predictions from the model were then output and saved.
+
+Example 3:
+The approach used can be divided into three parts: preprocessing, model training and postprocessing.
+PREPROCESSING
+1- construct arrays of frames, segmentation masks, box masks, box boundaries (xmin, ymin, xmax, ymax for the corners) and test frames for easier further processing
+2- resize data to 360x360 for our U-Net implementation and 224x224 for the bounding box detection
+3- export data as pickle files
+MODEL TRAINING
+1- data augmentation using the albumentations library (shift, scale, rotate, grid distortion, brightness and contrast change for the U-Net data, and shift, scale, rotate, brightness and contrast change for the box detection)
+2- construct data loaders (batch size of 1 for U-Net as described in the paper and 16 for box detection)
+3- networks definition
+    - U-Net: one input channel and one output per pixel (probability of being true, i.e., mask), binary cross-entropy loss, Adam optimizer with lr=5e-4
+    - box detection: pre-trained weights ResNet50 for the first few layers used as feature extractors, followed by linear and ReLU, ending with a sigmoid, MSE loss, Adam optimizer with lr=1e-3
+4- trained the two networks (U-Net for 8 ep and the other network for 30 ep)
+5- for prediction we load the original data, resize it so that it is the right dimemsion for each network and predict, then we resize again to fit the output shape
+6- the final prediction is the intersection of the mask of the segmentation and the mask of the box
