@@ -1,6 +1,8 @@
 # In[1]:
 import matplotlib.pyplot as plt
-import numpy as np
+## if plots are not shown in Pycharm, use this:
+#import matplotlib
+#matplotlib.use('module://backend_interagg')
 
 # In[1]:
 
@@ -15,26 +17,20 @@ import gzip
 import numpy as np
 import os
 import cv2
-import cv2 as cv
 from tensorflow.keras.preprocessing.image import load_img
 from tensorflow.keras.preprocessing.image import ImageDataGenerator
-
+from tensorflow.keras import backend as K
 # In[3]:
-
 
 from tensorflow.keras import layers
 from sklearn.model_selection import KFold
 
-
 from tensorflow import keras
-from PIL import Image as im
-
 
 from skimage.measure import label, regionprops
 import random
 # installation: pip install elasticdeform
-# import elasticdeform
-
+import elasticdeform
 
 # In[3]:
 if gpus:
@@ -89,16 +85,14 @@ def evaluate(predictions, targets):
 
 # In[6]:
 
-
 def double_conv_block(x, n_filters):
-    x = layers.Conv2D(n_filters, 3, padding="same")(x)  # kernel_initializer = "he_normal"
-    x = layers.BatchNormalization()(x)
-    x = layers.ReLU()(x)
-    x = layers.Conv2D(n_filters, 3, padding="same")(x)  # kernel_initializer = "he_normal"
-    x = layers.BatchNormalization()(x)
-    x = layers.ReLU()(x)
-    return x
-
+   x = layers.Conv2D(n_filters, 3, padding="same")(x)#kernel_initializer = "he_normal"
+   x = layers.BatchNormalization()(x)
+   x = layers.ReLU()(x)
+   x = layers.Conv2D(n_filters, 3, padding="same")(x)#kernel_initializer = "he_normal"
+   x = layers.BatchNormalization()(x)
+   x = layers.ReLU()(x)
+   return x
 
 # In[7]:
 
@@ -114,7 +108,7 @@ def downsample_block(x, n_filters):
 
 
 def upsample_block(x, conv_features, n_filters):
-    x = layers.Conv2DTranspose(n_filters, 2, 2, padding="valid")(x)
+    x = layers.Conv2DTranspose(n_filters, 2, 2, padding="same")(x)
     x = layers.concatenate([x, conv_features])
     # x = layers.Dropout(0.3)(x)
     x = double_conv_block(x, n_filters)
@@ -122,32 +116,81 @@ def upsample_block(x, conv_features, n_filters):
 
 
 # In[9]:
-
-
 def get_model(img_size):
     inputs = layers.Input(shape=img_size + (1,))
+    m = 2
+    f1, p1 = downsample_block(inputs, 16*m)
+    f2, p2 = downsample_block(p1, 32*m)
+    f3, p3 = downsample_block(p2, 64*m)
+    f4, p4 = downsample_block(p3, 128*m)
 
-    f1, p1 = downsample_block(inputs, 16)
-    f2, p2 = downsample_block(p1, 32)
-    f3, p3 = downsample_block(p2, 64)
-    # f4, p4 = downsample_block(p3, 256)
+    bottleneck = double_conv_block(p4, 256*m)
 
-    # bottleneck = double_conv_block(p4, 512)
-    bottleneck = double_conv_block(p3, 128)
-
-    # u6 = upsample_block(bottleneck, f4, 256)
-    u7 = upsample_block(bottleneck, f3, 64)
-    u8 = upsample_block(u7, f2, 32)
-    u9 = upsample_block(u8, f1, 16)
+    u6 = upsample_block(bottleneck, f4, 128*m)
+    u7 = upsample_block(u6, f3, 64*m)
+    u8 = upsample_block(u7, f2, 32*m)
+    u9 = upsample_block(u8, f1, 16*m)
 
     outputs = layers.Conv2D(1, 1, padding="valid", activation="sigmoid")(u9)
-
     unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
-
     return unet_model
 
 
-# ### Load data, make predictions and save prediction in correct format
+# def get_model(img_size):
+#     inputs = layers.Input(shape=img_size + (1,))
+#
+#     f1, p1 = downsample_block(inputs, 16)
+#     f2, p2 = downsample_block(p1, 32)
+#     f3, p3 = downsample_block(p2, 64)
+#     # f4, p4 = downsample_block(p3, 256)
+#
+#     # bottleneck = double_conv_block(p4, 512)
+#     bottleneck = double_conv_block(p3, 128)
+#
+#     # u6 = upsample_block(bottleneck, f4, 256)
+#     u7 = upsample_block(bottleneck, f3, 64)
+#     u8 = upsample_block(u7, f2, 32)
+#     u9 = upsample_block(u8, f1, 16)
+#
+#     outputs = layers.Conv2D(1, 1, padding="valid", activation="sigmoid")(u9)
+#
+#     unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
+#
+#     return unet_model
+
+
+# In[]:
+def jaccard_distance(y_true, y_pred, smooth=100):
+    """Jaccard distance for semantic segmentation.
+    The loss has been modified to have a smooth gradient as it converges on zero.
+    This has been shifted so it converges on 0 and is smoothed to avoid exploding
+    or disappearing gradient.
+    Jaccard = (|X & Y|)/ (|X|+ |Y| - |X & Y|)
+            = sum(|A*B|)/(sum(|A|)+sum(|B|)-sum(|A*B|))
+
+    # https://github.com/karolzak/keras-unet/tree/master/keras_unet
+    """
+    intersection = K.sum(K.abs(y_true * y_pred), axis=-1)
+    sum_ = K.sum(K.abs(y_true) + K.abs(y_pred), axis=-1)
+    jac = (intersection + smooth) / (sum_ - intersection + smooth)
+    return (1 - jac) * smooth
+
+def jaccard_coef(y_true, y_pred):
+    intersection = K.sum(y_true * y_pred)
+    union = K.sum(y_true + y_pred)
+    jac = (intersection + 1.) / (union - intersection + 1.)
+    return K.mean(jac)
+
+def dice_coef(y_true, y_pred):
+    smooth = 1.0
+    y_true_f = K.flatten(y_true)
+    y_pred_f = K.flatten(y_pred)
+    intersection = K.sum(y_true_f * y_pred_f)
+    return (2. * intersection + smooth) / (K.sum(y_true_f) + K.sum(y_pred_f) + smooth)
+
+
+def dice_coef_loss(y_true, y_pred):
+    return -dice_coef(y_true, y_pred)
 
 # In[10]:
 # load data
@@ -155,79 +198,38 @@ train_data = load_zipped_pickle("train.pkl")
 test_data = load_zipped_pickle("test.pkl")
 samples = load_zipped_pickle("sample.pkl")
 
-
-# # Visualizations
-# solution taken from https://stackoverflow.com/questions/43445103/inline-animations-in-jupyter
-#
-# also see http://louistiao.me/posts/notebooks/embedding-matplotlib-animations-in-jupyter-notebooks/
-
 # In[11]:
 
-#
-# from matplotlib import animation
-# from IPython.display import HTML
-#
-#
-# # %matplotlib inline
-#
-# def play_video(img_list):
-#     def init():
-#         img.set_data(img_list[0])
-#         return (img,)
-#
-#     def animate(i):
-#         img.set_data(img_list[i])
-#         return (img,)
-#
-#     fig = plt.figure()
-#     ax = fig.gca()
-#     img = ax.imshow(img_list[0], cmap='gray', vmin=0, vmax=255)
-#     anim = animation.FuncAnimation(fig, animate, init_func=init,
-#                                    frames=len(img_list), interval=20, blit=True)
-#     return anim
+from matplotlib import animation
+
+%matplotlib inline
+
+def play_video(img_list):
+    def init():
+        img.set_data(img_list[0])
+        return (img,)
+
+    def animate(i):
+        img.set_data(img_list[i])
+        return (img,)
+
+    fig = plt.figure()
+    ax = fig.gca()
+    img = ax.imshow(img_list[0], cmap='gray', vmin=0, vmax=255)
+    anim = animation.FuncAnimation(fig, animate, init_func=init,
+                                   frames=len(img_list), interval=20, blit=True)
+    return anim
 
 
-# In[14]:
 
-#
-# train_sample_id = 33
-# crop = False
-#
-# video = np.copy(train_data[train_sample_id]['video'])
-# labels = train_data[train_sample_id]['label']
-# box = train_data[train_sample_id]['box']
-# labeled_frames = train_data[train_sample_id]['frames']
-#
-# # first overlay the box and the labels of mitral valve wherever available
-# alpha = 0.2  # alpha blending parameter to overlay the box
-#
-# for i in range(video.shape[2]):
-#     frame = video[:, :, i]
-#     # add the labels
-#     frame[labels[:, :, i]] = 255
-#
-# # for i in range(video.shape[2]):
-# #     # overlay the box on all images
-# #     video[:,:,i] = (1-alpha)*video[:,:,i] + alpha*255*box
-#
-# print("Showing the training sample " + str(train_sample_id) + ":")
-#
-# if crop:
-#     boxnz = np.nonzero(box)
-#     w = boxnz[1][-1] - boxnz[1][0]
-#     y0 = boxnz[0][-1] - w
-#     y1 = boxnz[0][-1]
-#     x0 = boxnz[1][0]
-#     x1 = boxnz[1][-1]
-# else:
-#     y0 = 0
-#     y1 = video.shape[0]
-#     x0 = 0
-#     x1 = video.shape[1]
-#
-# imgs = [video[y0:y1, x0:x1, i] for i in range(video.shape[2])]
-#
-# HTML(play_video(imgs).to_jshtml())
+# In[]:
+for i in range(len(train_data)):
+    for j in range(train_data[i]['video'].shape[2]):
+        # if np.max(train_data[i]['video'][:,:,j]) != 255:
+        #     print('max of frame %d in video %d : %d' %(j, i, np.max(train_data[i]['video'][:,:,j])))
+
+        if np.min(train_data[i]['video'][:,:,j]) != 0:
+            print('min of frame %d in video %d : %d' %(j, i, np.min(train_data[i]['video'][:,:,j])))
 
 # In[12]:
 
@@ -235,49 +237,15 @@ samples = load_zipped_pickle("sample.pkl")
 for i in range(len(test_data)):
     print(test_data[i]['video'].shape)
 
-# ## If we want to use 'featurewise_std_normalization' we should use the fit method: (skip for now)
-
-# In[ ]:
-
-
-# we create two instances with the same arguments
-# data_gen_args = dict(featurewise_center=True,
-#                      featurewise_std_normalization=True,
-#                      rotation_range=90,
-#                      width_shift_range=0.1,
-#                      height_shift_range=0.1,
-#                      zoom_range=0.2)
-# image_datagen = ImageDataGenerator(**data_gen_args)
-# mask_datagen = ImageDataGenerator(**data_gen_args)
-# # Provide the same seed and keyword arguments to the fit and flow methods
-# seed = 1
-# image_datagen.fit(images, augment=True, seed=seed)
-# mask_datagen.fit(masks, augment=True, seed=seed)
-# image_generator = image_datagen.flow_from_directory(
-#     'data/images',
-#     class_mode=None,
-#     seed=seed)
-# mask_generator = mask_datagen.flow_from_directory(
-#     'data/masks',
-#     class_mode=None,
-#     seed=seed)
-# # combine generators into one which yields image and masks
-# train_generator = zip(image_generator, mask_generator)
-# model.fit(
-#     train_generator,
-#     steps_per_epoch=2000,
-#     epochs=50)
-
-
-# # Data augmentation using ImageDataGenerator
-
 # In[13]:
+# ## If we want to use 'featurewise_std_normalization' we should use the fit method
+# # Data augmentation using ImageDataGenerator
 # data_gen_args = dict(featurewise_center=True,
 #                      featurewise_std_normalization=True,
 def augment_data(image, mask):
     seed = 1
-    data_gen_args = dict(horizontal_flip=True,
-                         rotation_range=10,
+    # I don't do horizontal_flip bc the mitral valve is in the same side in all videos
+    data_gen_args = dict(rotation_range=10,
                          shear_range=10,
                          zoom_range=[0.8, 1.1],
                          height_shift_range=0.1,
@@ -333,95 +301,113 @@ def compute_IoU(y_test, pred):
         IoU_score += intersection/union
     return IoU_score/pred.shape[0]
 # In[14]:
+def show_train_sample(train_sample_id, labeled_frame_idx):
+    video = np.copy(train_data[train_sample_id]['video'])
+    labels = train_data[train_sample_id]['label']
+    labeled_frames = train_data[train_sample_id]['frames']
+    X = 0.5*video[:,:,labeled_frames[labeled_frame_idx]] + 0.5*(255*labels[:,:,labeled_frames[labeled_frame_idx]])
+    plt.imshow(X)
+    plt.show()
 
-train_sample_id = 50
+def show_test_sample(test_sample_id, frame_idx):
+    video = np.copy(test_data[test_sample_id]['video'])
+    X = video[:,:,frame_idx]
+    plt.imshow(X)
+    plt.show()
+
+###### VISUALIZE THE AUGMENTED FRAMES AND LABELS: ######
+
+# train_sample_id = 1
+# labeled_frame_idx = 1
+# video = np.copy(train_data[train_sample_id]['video'])
+# labels = train_data[train_sample_id]['label']
+# labeled_frames = train_data[train_sample_id]['frames']
+# aug_frames, aug_labels = augment_data(video[:,:,labeled_frames[labeled_frame_idx]], 255*labels[:,:,labeled_frames[labeled_frame_idx]].astype(np.ubyte))
+#
+# nrow = 4
+# ncol = 4
+# # generate samples and plot
+# fig, ax = plt.subplots(nrows=nrow, ncols=ncol, figsize=(15, 15 * nrow / ncol))
+#
+# for ox in ax.reshape(-1):
+#     # convert to unsigned integers
+#     image = next(aug_frames)[0].astype('uint8')
+#     mask = next(aug_labels)[0].astype('uint8')
+#     ox.imshow(image)
+#     ox.imshow(mask, alpha=0.5)
+#     ox.axis('off')
+#
+# plt.show()
+
+
+# In[17]:
+###### Visualize elastic deformation: ######
+
+train_sample_id = 1
 labeled_frame_idx = 1
+crop = False
+seed = 1
 
 video = np.copy(train_data[train_sample_id]['video'])
 labels = train_data[train_sample_id]['label']
 box = train_data[train_sample_id]['box']
 labeled_frames = train_data[train_sample_id]['frames']
 
-aug_frames, aug_labels = augment_data(video[:,:,labeled_frames[labeled_frame_idx]], 255*labels[:,:,labeled_frames[labeled_frame_idx]].astype(np.ubyte))
+X = video[:,:,labeled_frames[labeled_frame_idx]]
 
-nrow = 4
-ncol = 4
-# generate samples and plot
-fig, ax = plt.subplots(nrows=nrow, ncols=ncol, figsize=(15, 15 * nrow / ncol))
+Y = labels[:,:,labeled_frames[labeled_frame_idx]]
 
-for ox in ax.reshape(-1):
-    # convert to unsigned integers
-    image = next(aug_frames)[0].astype('uint8')
-    mask = next(aug_labels)[0].astype('uint8')
-    ox.imshow(image)
-    ox.imshow(mask, alpha=0.5)
-    ox.axis('off')
+[X_deformed, Y_deformed] = elasticdeform.deform_random_grid([X, Y], sigma=8,  order=1, points=3)
 
+plt.imshow(X_deformed)
+plt.imshow(Y_deformed, alpha=0.5)
 plt.show()
 
-## Deformation (doesn't work yet)
-
-# In[17]:
-
-
-# X = np.zeros((200, 300))
-# X[::10, ::10] = 1
-# train_sample_id = 33
-# labeled_frame_idx = 1
-# crop = False
-# seed = 1
-#
-# video = np.copy(train_data[train_sample_id]['video'])
-# labels = train_data[train_sample_id]['label']
-# box = train_data[train_sample_id]['box']
-# labeled_frames = train_data[train_sample_id]['frames']
-#
-# X = video[:, :, labeled_frames[labeled_frame_idx]]
-#
-# Y = labels[:, :, labeled_frames[labeled_frame_idx]]
-#
-# # apply deformation with a random 3 x 3 grid
-# X_deformed = elasticdeform.deform_random_grid(X, sigma=10, points=3)
-# # [X_deformed, Y_deformed] = elasticdeform.deform_random_grid([X, Y],  order=[5, 5])
-# # [X_deformed, Y_deformed] = elasticdeform.deform_random_grid([X, Y],  sigma=0.01, points=1)
-#
-#
-# # In[18]:
-#
-#
-# plt.imshow(X)
-# plt.show
-
-# # the U-net
 
 # In[15]:
+## Data augmentation:
 
-N_AUG_PER_SAMPLE = 20
+img_height = 192
+img_width = 192
+
+N_AUG_SIMPLE_PER_SAMPLE = 10   # number of augmentations using ImageDataGeneratir
+N_AUG_DEFORM_PER_SAMPLE = 20   # number of augmentations using elasticdeform
+N_AUG_PER_SAMPLE = N_AUG_SIMPLE_PER_SAMPLE + N_AUG_DEFORM_PER_SAMPLE
 x_train = []
 y_train = []
 for d in train_data:
     for i in d["frames"]:
         image = d["video"][:, :, i]
         mask = 255 * d["label"][:, :, i].astype(np.ubyte)
-        x_train.append(cv2.resize(image, dsize=(360, 360)))
-        y_train.append(cv2.resize(mask, dsize=(360, 360)))
+        x_train.append(cv2.resize(image, dsize=(img_height, img_width)))
+        y_train.append(cv2.resize(mask, dsize=(img_height, img_width)))
         aug_images, aug_masks = augment_data(image, mask)
-        for tt in range(N_AUG_PER_SAMPLE):
-            x_train.append(cv2.resize(next(aug_images)[0], dsize=(360, 360)))
-            y_train.append(cv2.resize(next(aug_masks)[0], dsize=(360, 360)))
+        for tt in range(N_AUG_SIMPLE_PER_SAMPLE):
+            x_train.append(cv2.resize(next(aug_images)[0], dsize=(img_height, img_width)))
+            y_train.append(cv2.resize(next(aug_masks)[0], dsize=(img_height, img_width)))
+        for tt in range(N_AUG_DEFORM_PER_SAMPLE):
+            [image_deformed, mask_deformed] = elasticdeform.deform_random_grid([image, mask], sigma=8, order=1, points=3)
+            x_train.append(cv2.resize(image_deformed, dsize=(img_height, img_width)))
+            y_train.append(cv2.resize(mask_deformed, dsize=(img_height, img_width)))
 
-## randomly shuffle the training data:
-# combined_list = list(zip(x_train, y_train))
-# random.shuffle(combined_list)
-# x_train, y_train = zip(*combined_list)
-# x_train, y_train = list(x_train), list(y_train)
+# In[]:
+## Preprocessing: (it helps according to K-fold cross validation results; average score got improved from 0.31 to 0.38)
+#x_train = (x_train - np.mean(x_train))/np.std(x_train)
+for i in range(len(x_train)):
+    x_train[i] = (x_train[i] - np.mean(x_train[i]))/np.std(x_train[i])
 
+
+
+# clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+# equalized = clahe.apply(gray)
 # In[16]:
 x_train = np.expand_dims(np.array(x_train, dtype=np.single), 3)
 y_train = np.expand_dims(np.array(y_train, dtype=np.single), 3)
 
 # In[16]:
-## Custom K-fold split: we want to use only expert labels and their augmentations for the validation
+## Custom K-fold split: the goal is to use 3 amatuer videos and 10 expert videos and the augmentations thereof, for the validation
+## and for the training set, we use 43 amateur and 9 expert videos and the augmentations thereof
+
 N_SPLITS = 5
 amateur_idx = []
 expert_idx = []
@@ -466,6 +452,7 @@ random.seed(seed)
 np.random.seed(seed)
 tf.random.set_seed(seed)
 
+history_l = []
 # for train_idx, test_idx in KFold(n_splits=5, shuffle=True).split(y_train):
 for jj in range(len(train_list)):
     train_idx = train_list[jj]
@@ -476,16 +463,15 @@ for jj in range(len(train_list)):
     print('------------------------------------------------------------------------------------')
 
     keras.backend.clear_session()
-    model = get_model((360, 360))
+    model = get_model((img_height, img_width))
     #model.summary()
 
     model.compile(
-        optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-        # loss=keras.losses.CategoricalCrossentropy(),
-        loss=keras.losses.BinaryCrossentropy(),
-        metrics=[keras.metrics.BinaryAccuracy(name='accuracy')]
-        #loss=tf.keras.metrics.MeanIoU(num_classes=2),
-        #metrics=[tf.keras.metrics.MeanIoU(num_classes=2)]
+        optimizer=keras.optimizers.Adam(learning_rate=5e-4),
+        # loss=keras.losses.BinaryCrossentropy(),
+        # metrics=[jaccard_coef],
+        loss=dice_coef_loss,
+        metrics=[dice_coef]
     )
 
     history = model.fit(
@@ -496,15 +482,16 @@ for jj in range(len(train_list)):
         epochs=EPOCHS,
         verbose=2
     )
-
+    history_l.append(history)
     pred = model.predict(x_train[test_idx])
     pred = np.squeeze(pred)
 
     new_pred = post_process(pred, threshold=0.999, num_blobs=2)
-    scores.append(compute_IoU(y_train[test_idx], new_pred))
+    score = compute_IoU(y_train[test_idx], new_pred)
+    scores.append(score)
 
-    print(" -- fold %d score: %d", fold_no, scores[fold_no-1])
-
+    print(" -- fold %d score: %f" %(fold_no, score))
+    #break
 print("Average IoU over folds: %d", np.mean(scores))
 #model.save('./save_model')
 # In[16]:
@@ -530,13 +517,15 @@ plt.show()
 # In[20]:
 
 keras.backend.clear_session()
-model = get_model((360, 360))
+model = get_model((img_height, img_width))
 #model.summary()
 
 model.compile(
-    optimizer=keras.optimizers.Adam(learning_rate=1e-3),
-    loss=keras.losses.BinaryCrossentropy(),
-    metrics=[keras.metrics.BinaryAccuracy(name='accuracy')]
+    optimizer=keras.optimizers.Adam(learning_rate=5e-4),
+    # loss=keras.losses.BinaryCrossentropy(),
+    # metrics=[jaccard_coef]
+    loss=dice_coef_loss,
+    metrics=[dice_coef]
 )
 
 history = model.fit(
@@ -548,14 +537,20 @@ history = model.fit(
 )
 
 # In[]
-#model.save('./save_model')
+model.save('./save_model')
 
+# In[]
 # Prediction and post processing:
 
 x_test = []
 for i in range(len(test_data)):
     for j in range(test_data[i]['video'].shape[2]):
-        x_test.append(cv2.resize(test_data[i]['video'][:,:,j], dsize=(360, 360)))
+        x_test.append(cv2.resize(test_data[i]['video'][:,:,j], dsize=(img_height, img_width)))
+
+# Preprocessing:
+# for i in range(len(x_test)):
+#     x_test[i] = (x_test[i] - np.mean(x_test[i]))/np.std(x_test[i])
+
 x_test = np.expand_dims(np.array(x_test, dtype=np.single), 3)
 
 test_pred = model.predict(x_test)
@@ -567,7 +562,7 @@ test_pred = post_process(test_pred, threshold=0.999, num_blobs=2)
 predictions = []
 idx = 0
 for d in test_data:
-    prediction = np.array(np.zeros_like(d['video']), dtype=np.bool)
+    prediction = np.array(np.zeros_like(d['video']), dtype=bool)
     height = prediction.shape[0]
     width = prediction.shape[1]
     for kk in range(prediction.shape[2]):
@@ -582,7 +577,21 @@ for d in test_data:
     )
 
 # In[ ]:
-
-
 # save in correct format
-save_zipped_pickle(predictions, 'my_predictions.pkl')
+save_zipped_pickle(predictions, 'seyed_predictions8.pkl')
+
+# In[ ]:
+ii = 6
+fr = 30
+plt.imshow(test_data[ii]['video'][:,:,fr])
+plt.imshow(predictions[ii]['prediction'][:,:,fr], alpha=0.5)
+plt.show()
+if predictions[ii]['prediction'].shape != test_data[ii]['video'].shape:
+    print('ERROR')
+
+# In[ ]:
+kk = 10
+
+plt.imshow(y_train[test_idx[kk]], cmap='plasma')
+plt.imshow(new_pred[kk], cmap='magma', alpha=0.5)
+plt.show()
