@@ -180,7 +180,7 @@ def augment_data(image, mask):
 
     return aug_frames, aug_labels
 
-def augmented_images_visualization():
+def augmented_images_visualization(train_data):
     train_sample_id = 50
     labeled_frame_idx = 1
 
@@ -207,7 +207,7 @@ def augmented_images_visualization():
     plt.show()
 
 # Data Set loading
-def augmented_image_loading(n_augmentations=10):
+def augmented_image_loading(train_data, test_data, n_augmentations=10):
     x_train = []
     y_train = []
     mask = np.zeros(INPUT_SHAPE)
