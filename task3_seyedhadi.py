@@ -363,12 +363,18 @@ plt.imshow(X_deformed)
 plt.imshow(Y_deformed, alpha=0.5)
 plt.show()
 
+# In[]:
+def show_example(i):
+    plt.imshow(x_train[i])
+    plt.imshow(y_train[i], alpha=0.5)
+    plt.show()
 
 # In[15]:
 ## Data augmentation:
 
 img_height = 192
 img_width = 192
+DO_PREPROCESSING = True
 
 N_AUG_SIMPLE_PER_SAMPLE = 10   # number of augmentations using ImageDataGeneratir
 N_AUG_DEFORM_PER_SAMPLE = 20   # number of augmentations using elasticdeform
@@ -378,28 +384,37 @@ y_train = []
 for d in train_data:
     for i in d["frames"]:
         image = d["video"][:, :, i]
-        mask = 255 * d["label"][:, :, i].astype(np.ubyte)
+        mask = 1 * d["label"][:, :, i].astype(np.ubyte)
+        # imgR = cv2.resize(image, dsize=(img_height, img_width))
+        # imgRS = 255*np.floor((imgR - np.min(imgR))/(np.max(imgR) - np.min(imgR)))
+        # maskR = cv2.resize(mask, dsize=(img_height, img_width))
         x_train.append(cv2.resize(image, dsize=(img_height, img_width)))
-        y_train.append(cv2.resize(mask, dsize=(img_height, img_width)))
+        y_label = 1 * (cv2.resize(mask, dsize=(img_height, img_width)) > 0)
+        y_train.append(y_label)
         aug_images, aug_masks = augment_data(image, mask)
         for tt in range(N_AUG_SIMPLE_PER_SAMPLE):
             x_train.append(cv2.resize(next(aug_images)[0], dsize=(img_height, img_width)))
-            y_train.append(cv2.resize(next(aug_masks)[0], dsize=(img_height, img_width)))
+            aug_label = 1*(cv2.resize(next(aug_masks)[0], dsize=(img_height, img_width)) > 0)
+            y_train.append(aug_label)
         for tt in range(N_AUG_DEFORM_PER_SAMPLE):
             [image_deformed, mask_deformed] = elasticdeform.deform_random_grid([image, mask], sigma=8, order=1, points=3)
             x_train.append(cv2.resize(image_deformed, dsize=(img_height, img_width)))
-            y_train.append(cv2.resize(mask_deformed, dsize=(img_height, img_width)))
+            aug_label = 1*(cv2.resize(mask_deformed, dsize=(img_height, img_width)) > 0)
+            y_train.append(aug_label)
 
 # In[]:
 ## Preprocessing: (it helps according to K-fold cross validation results; average score got improved from 0.31 to 0.38)
 #x_train = (x_train - np.mean(x_train))/np.std(x_train)
-for i in range(len(x_train)):
-    x_train[i] = (x_train[i] - np.mean(x_train[i]))/np.std(x_train[i])
+clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+#hist,bins = np.histogram(X_equalized,256,[0,256])
 
+if DO_PREPROCESSING:
+    for i in range(len(x_train)):
+        XX = x_train[i]
+        XY = cv2.normalize(XX, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        X_eq = clahe.apply(XY)
+        x_train[i] = (X_eq - np.mean(X_eq))/np.std(X_eq)
 
-
-# clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-# equalized = clahe.apply(gray)
 # In[16]:
 x_train = np.expand_dims(np.array(x_train, dtype=np.single), 3)
 y_train = np.expand_dims(np.array(y_train, dtype=np.single), 3)
@@ -548,8 +563,13 @@ for i in range(len(test_data)):
         x_test.append(cv2.resize(test_data[i]['video'][:,:,j], dsize=(img_height, img_width)))
 
 # Preprocessing:
-# for i in range(len(x_test)):
-#     x_test[i] = (x_test[i] - np.mean(x_test[i]))/np.std(x_test[i])
+
+if DO_PREPROCESSING:
+    for i in range(len(x_test)):
+        XX = x_test[i]
+        XY = cv2.normalize(XX, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
+        X_eq = clahe.apply(XY)
+        x_test[i] = (X_eq - np.mean(X_eq))/np.std(X_eq)
 
 x_test = np.expand_dims(np.array(x_test, dtype=np.single), 3)
 
@@ -578,7 +598,7 @@ for d in test_data:
 
 # In[ ]:
 # save in correct format
-save_zipped_pickle(predictions, 'seyed_predictions8.pkl')
+save_zipped_pickle(predictions, 'seyed_predictions9.pkl')
 
 # In[ ]:
 ii = 6
