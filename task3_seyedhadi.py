@@ -135,22 +135,19 @@ def get_model(img_size):
     unet_model = tf.keras.Model(inputs, outputs, name="U-Net")
     return unet_model
 
-
+# In[]:
 # def get_model(img_size):
 #     inputs = layers.Input(shape=img_size + (1,))
+#     m = 2
+#     f1, p1 = downsample_block(inputs, 16*m)
+#     f2, p2 = downsample_block(p1, 32*m)
+#     f3, p3 = downsample_block(p2, 64*m)
 #
-#     f1, p1 = downsample_block(inputs, 16)
-#     f2, p2 = downsample_block(p1, 32)
-#     f3, p3 = downsample_block(p2, 64)
-#     # f4, p4 = downsample_block(p3, 256)
+#     bottleneck = double_conv_block(p3, 128*m)
 #
-#     # bottleneck = double_conv_block(p4, 512)
-#     bottleneck = double_conv_block(p3, 128)
-#
-#     # u6 = upsample_block(bottleneck, f4, 256)
-#     u7 = upsample_block(bottleneck, f3, 64)
-#     u8 = upsample_block(u7, f2, 32)
-#     u9 = upsample_block(u8, f1, 16)
+#     u7 = upsample_block(bottleneck, f3, 64*m)
+#     u8 = upsample_block(u7, f2, 32*m)
+#     u9 = upsample_block(u8, f1, 16*m)
 #
 #     outputs = layers.Conv2D(1, 1, padding="valid", activation="sigmoid")(u9)
 #
@@ -198,44 +195,6 @@ train_data = load_zipped_pickle("train.pkl")
 test_data = load_zipped_pickle("test.pkl")
 samples = load_zipped_pickle("sample.pkl")
 
-# In[11]:
-
-from matplotlib import animation
-
-%matplotlib inline
-
-def play_video(img_list):
-    def init():
-        img.set_data(img_list[0])
-        return (img,)
-
-    def animate(i):
-        img.set_data(img_list[i])
-        return (img,)
-
-    fig = plt.figure()
-    ax = fig.gca()
-    img = ax.imshow(img_list[0], cmap='gray', vmin=0, vmax=255)
-    anim = animation.FuncAnimation(fig, animate, init_func=init,
-                                   frames=len(img_list), interval=20, blit=True)
-    return anim
-
-
-
-# In[]:
-for i in range(len(train_data)):
-    for j in range(train_data[i]['video'].shape[2]):
-        # if np.max(train_data[i]['video'][:,:,j]) != 255:
-        #     print('max of frame %d in video %d : %d' %(j, i, np.max(train_data[i]['video'][:,:,j])))
-
-        if np.min(train_data[i]['video'][:,:,j]) != 0:
-            print('min of frame %d in video %d : %d' %(j, i, np.min(train_data[i]['video'][:,:,j])))
-
-# In[12]:
-
-
-for i in range(len(test_data)):
-    print(test_data[i]['video'].shape)
 
 # In[13]:
 # ## If we want to use 'featurewise_std_normalization' we should use the fit method
@@ -379,7 +338,7 @@ DO_PREPROCESSING = True
 N_AUG_SIMPLE_PER_SAMPLE = 10   # number of augmentations using ImageDataGeneratir
 N_AUG_DEFORM_PER_SAMPLE = 20   # number of augmentations using elasticdeform
 N_AUG_PER_SAMPLE = N_AUG_SIMPLE_PER_SAMPLE + N_AUG_DEFORM_PER_SAMPLE
-x_train = []
+x_train0 = []
 y_train = []
 for d in train_data:
     for i in d["frames"]:
@@ -388,17 +347,17 @@ for d in train_data:
         # imgR = cv2.resize(image, dsize=(img_height, img_width))
         # imgRS = 255*np.floor((imgR - np.min(imgR))/(np.max(imgR) - np.min(imgR)))
         # maskR = cv2.resize(mask, dsize=(img_height, img_width))
-        x_train.append(cv2.resize(image, dsize=(img_height, img_width)))
+        x_train0.append(cv2.resize(image, dsize=(img_height, img_width)))
         y_label = 1 * (cv2.resize(mask, dsize=(img_height, img_width)) > 0)
         y_train.append(y_label)
         aug_images, aug_masks = augment_data(image, mask)
         for tt in range(N_AUG_SIMPLE_PER_SAMPLE):
-            x_train.append(cv2.resize(next(aug_images)[0], dsize=(img_height, img_width)))
+            x_train0.append(cv2.resize(next(aug_images)[0], dsize=(img_height, img_width)))
             aug_label = 1*(cv2.resize(next(aug_masks)[0], dsize=(img_height, img_width)) > 0)
             y_train.append(aug_label)
         for tt in range(N_AUG_DEFORM_PER_SAMPLE):
             [image_deformed, mask_deformed] = elasticdeform.deform_random_grid([image, mask], sigma=8, order=1, points=3)
-            x_train.append(cv2.resize(image_deformed, dsize=(img_height, img_width)))
+            x_train0.append(cv2.resize(image_deformed, dsize=(img_height, img_width)))
             aug_label = 1*(cv2.resize(mask_deformed, dsize=(img_height, img_width)) > 0)
             y_train.append(aug_label)
 
@@ -406,13 +365,15 @@ for d in train_data:
 ## Preprocessing: (it helps according to K-fold cross validation results; average score got improved from 0.31 to 0.38)
 #x_train = (x_train - np.mean(x_train))/np.std(x_train)
 clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-#hist,bins = np.histogram(X_equalized,256,[0,256])
+
+x_train = x_train0.copy()
 
 if DO_PREPROCESSING:
     for i in range(len(x_train)):
         XX = x_train[i]
         XY = cv2.normalize(XX, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        X_eq = clahe.apply(XY)
+        #X_eq = clahe.apply(XY)
+        X_eq = XY
         x_train[i] = (X_eq - np.mean(X_eq))/np.std(X_eq)
 
 # In[16]:
@@ -459,7 +420,7 @@ for fold_no in range(N_SPLITS):
     test_list.append(TE_L)
 # In[17]:
 EPOCHS = 10
-BATCH_SIZE = 10
+BATCH_SIZE = 20
 fold_no = 0
 seed = 1
 scores = []
@@ -552,7 +513,7 @@ history = model.fit(
 )
 
 # In[]
-model.save('./save_model')
+model.save('./model10')
 
 # In[]
 # Prediction and post processing:
@@ -568,7 +529,8 @@ if DO_PREPROCESSING:
     for i in range(len(x_test)):
         XX = x_test[i]
         XY = cv2.normalize(XX, None, 0, 255, cv2.NORM_MINMAX, dtype=cv2.CV_8U)
-        X_eq = clahe.apply(XY)
+        #X_eq = clahe.apply(XY)
+        X_eq = XY
         x_test[i] = (X_eq - np.mean(X_eq))/np.std(X_eq)
 
 x_test = np.expand_dims(np.array(x_test, dtype=np.single), 3)
@@ -598,7 +560,7 @@ for d in test_data:
 
 # In[ ]:
 # save in correct format
-save_zipped_pickle(predictions, 'seyed_predictions9.pkl')
+save_zipped_pickle(predictions, 'seyed_predictions10.pkl')
 
 # In[ ]:
 ii = 6
